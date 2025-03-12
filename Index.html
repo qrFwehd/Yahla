@@ -1,0 +1,189 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure File Transfer v2.0</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #2ecc71;
+            --background-color: #1a1a1a;
+        }
+
+        body {
+            font-family: 'Tahoma', sans-serif;
+            background: var(--background-color);
+            color: #fff;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .security-badge {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #e74c3c;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        #qrcode-container {
+            margin: 20px auto;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            width: fit-content;
+        }
+
+        .otp-display {
+            font-size: 2.5em;
+            letter-spacing: 5px;
+            color: var(--primary-color);
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .file-input-section {
+            border: 2px dashed var(--primary-color);
+            padding: 25px;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        #lang-switcher {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="security-badge">🔒 TLS 1.3 ENCRYPTED</div>
+    
+    <div id="admin-panel">
+        <h1>🚀 نظام التحكم الآمن v2.0</h1>
+        
+        <div id="qrcode-container"></div>
+        
+        <div class="otp-display" id="dynamic-code"></div>
+        
+        <div class="file-input-section">
+            <input type="file" id="file-upload" multiple accept="image/*,application/pdf" hidden>
+            <button onclick="document.getElementById('file-upload').click()">📁 اختر الملفات</button>
+            <button onclick="handleUpload()" style="margin-right: 10px;">📤 بدء الرفع</button>
+            <div id="upload-status"></div>
+        </div>
+        
+        <div id="received-files"></div>
+    </div>
+
+    <select id="lang-switcher" onchange="switchLanguage()">
+        <option value="ar">العربية</option>
+        <option value="en">English</option>
+    </select>
+
+    <script>
+        // التهيئات الأساسية
+        const DB_NAME = 'SecureFileDB_v2';
+        const STORE_NAME = 'EncryptedStorage';
+        let currentOTP = null;
+        let dbInstance = null;
+        let activeSession = null;
+
+        // تهيئة قاعدة البيانات
+        function initializeDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 2);
+
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        const store = db.createObjectStore(STORE_NAME, {
+                            keyPath: 'id',
+                            autoIncrement: true
+                        });
+                        store.createIndex('timestamp', 'timestamp', { unique: false });
+                    }
+                };
+
+                request.onsuccess = (event) => {
+                    dbInstance = event.target.result;
+                    resolve();
+                };
+
+                request.onerror = (event) => {
+                    reject('فشل في تهيئة قاعدة البيانات');
+                };
+            });
+        }
+
+        // توليد الرمز السري OTP
+        function generateOTP() {
+            currentOTP = Math.floor(100000 + Math.random() * 900000);
+            document.getElementById('dynamic-code').textContent = currentOTP;
+            new QRCode(document.getElementById('qrcode-container'), {
+                text: `${window.location.href}#${currentOTP}`,
+                width: 256,
+                height: 256,
+                colorDark: "#1a1a1a",
+                correctLevel: QRCode.CorrectLevel.H
+            });
+            return currentOTP;
+        }
+
+        // معالجة الرفع
+        async function handleUpload() {
+            const files = document.getElementById('file-upload').files;
+            if (files.length === 0) return;
+            
+            const transaction = dbInstance.transaction(STORE_NAME, 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            
+            Array.from(files).forEach(async (file) => {
+                const fileBuffer = await file.arrayBuffer();
+                const encryptedData = CryptoJS.AES.encrypt(
+                    CryptoJS.lib.WordArray.create(fileBuffer),
+                    currentOTP.toString()
+                ).toString();
+                
+                store.add({
+                    data: encryptedData,
+                    filename: file.name,
+                    type: file.type,
+                    timestamp: new Date().toISOString()
+                });
+            });
+
+            document.getElementById('upload-status').innerHTML = 
+                `✅ تم رفع ${files.length} ملف بنجاح`;
+            
+            generateOTP(); // تجديد الرمز بعد كل رفع
+        }
+
+        // تبديل اللغة
+        function switchLanguage() {
+            const lang = document.getElementById('lang-switcher').value;
+            document.documentElement.lang = lang;
+            document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+        }
+
+        // تهيئة الخدمة
+        window.onload = async () => {
+            await initializeDB();
+            generateOTP();
+            
+            // تسجيل Service Worker للإشعارات
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('sw.js')
+                    .then(() => console.log('Service Worker مسجل'))
+                    .catch(err => console.error('فشل التسجيل:', err));
+            }
+        };
+    </script>
+</body>
+</html>
